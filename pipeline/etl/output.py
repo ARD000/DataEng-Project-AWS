@@ -1,5 +1,5 @@
 import os
-from extract import extract_csv, extraction_successful
+from pipeline.ingestion.extract import extract_csv, extraction_successful
 
 BASE_DIR = os.path.dirname(__file__)
 file_path = os.path.join(BASE_DIR, "leedsdata.csv")
