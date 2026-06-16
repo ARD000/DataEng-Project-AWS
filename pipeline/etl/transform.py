@@ -1,39 +1,29 @@
-
 import os
 import csv
 import json
 import uuid
+import hashlib
+from datetime import datetime
+from collections import defaultdict
 
-# -----------------------------
-# BASE PATH (ETL folder)
-# -----------------------------
+# where this file lives
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# CSV location:
-# pipeline/ingestion/sources/leedsdata.csv
+# CSV lives two levels up in pipeline/ingestion/sources/
 CSV_PATH = os.path.normpath(
     os.path.join(BASE_DIR, "..", "ingestion", "sources", "leedsdata.csv")
 )
 
-# Output location (same folder)
+# transformed output goes back into the same sources folder
 OUTPUT_PATH = os.path.normpath(
     os.path.join(BASE_DIR, "..", "ingestion", "sources", "leeds_order.json")
 )
-
-# -----------------------------
-# DEBUG
-# -----------------------------
-print("CWD:", os.getcwd())
-print("CSV PATH:", CSV_PATH)
-print("CSV EXISTS:", os.path.exists(CSV_PATH))
 
 
 # -----------------------------
 # EXTRACT
 # -----------------------------
 def extract_csv(file_path):
-    print(f"Loading CSV: {file_path}")
-
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"CSV not found at: {file_path}")
 
@@ -42,56 +32,114 @@ def extract_csv(file_path):
 
 
 # -----------------------------
+# HELPERS
+# -----------------------------
+def hash_customer(name):
+    # we don't store the real name - hash it so we can still spot regulars
+    # the same name always produces the same UUID, but you can't reverse it back to the name
+    hashed = hashlib.sha256(name.strip().lower().encode()).digest()
+    return str(uuid.UUID(bytes=hashed[:16]))
+
+
+def parse_item(raw_item):
+    # price is always the very last part after " - "
+    # e.g. "Large Chai latte - 2.60" → name="Large Chai latte", price=2.60
+    # e.g. "Regular Flavoured iced latte - Hazelnut - 2.75" → name="Regular Flavoured iced latte - Hazelnut", price=2.75
+    name, price = raw_item.strip().rsplit(" - ", 1)
+    name = name.strip()
+
+    # first word is always the size (Large or Regular)
+    size = name.split(" ", 1)[0]
+
+    # flavour only exists if the word "Flavoured" appears in the name
+    # if it does, the flavour is the bit after the last " - " in the name
+    # e.g. "Regular Flavoured iced latte - Hazelnut" → flavour = "Hazelnut"
+    flavour = None
+    if "Flavoured" in name and " - " in name:
+        flavour = name.rsplit(" - ", 1)[1].strip()
+
+    return {
+        "item_name": name,
+        "size": size,
+        "flavour": flavour,
+        "price": float(price.strip())
+    }
+
+
+# -----------------------------
 # TRANSFORM
 # -----------------------------
 def transform_data(rows):
-    transactions = []
-    items = []
+    orders = []
+    order_items = []
 
     for row in rows:
-        transaction_id = str(uuid.uuid4())
+        order_id = str(uuid.uuid4())
+
+        # the CSV has separate date and time columns with a leading space on " time"
+        # we combine them into a single timestamp for the database
+        date_str = row["date"].strip()
+        time_str = row[" time"].strip()
+        order_time = datetime.strptime(f"{date_str} {time_str}", "%d/%m/%Y %H:%M")
 
         # -------------------------
-        # TRANSACTIONS TABLE
+        # BUILD THE ORDER ROW
         # -------------------------
-        transactions.append({
-            "id": transaction_id,
-            "date": row["date"],
-            "time": row[" time"].strip(),
-            "location": row[" location"].strip(),
-            "amount_paid": row[" amount_paid"],
-            "payment_method": row[" payment_method"],
-            "card_number": row[" card_number"]
+        orders.append({
+            "id": order_id,
+            "branch_name": row[" location"].strip(),
+            # hash the customer name instead of storing it - GDPR friendly
+            # same person will always get the same hash so we can still count their visits
+            "customer_id": hash_customer(row[" customer_name"].strip()),
+            "order_time": order_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "payment_method": row[" payment_method"].strip(),
+            "total_amount": float(row[" amount_paid"].strip()),
+            # card_number deliberately left out - we don't store sensitive financial data
         })
 
         # -------------------------
-        # ITEMS TABLE
+        # BUILD THE ORDER ITEMS
         # -------------------------
-        raw_items = row.get(" items_total")
+        raw_items = row.get(" items_total", "")
 
-        if raw_items:
-            item_list = raw_items.split(",")
+        if not raw_items:
+            continue
 
-            for item in item_list:
-                item = item.strip()
+        # if the same item appears more than once in an order we want quantity: 3
+        # rather than 3 duplicate rows - so we group by item before appending
+        item_counts = defaultdict(int)
+        item_details = {}
 
-                if " - " not in item:
-                    continue
+        for raw_item in raw_items.split(","):
+            raw_item = raw_item.strip()
 
-                name, price = item.rsplit(" - ", 1)
+            if " - " not in raw_item:
+                continue
 
-                items.append({
-                    "item_id": str(uuid.uuid4()),
-                    "transaction_id": transaction_id,
-                    "item_name": name.strip(),
-                    "price": float(price)
-                })
+            parsed = parse_item(raw_item)
 
-    return transactions, items
+            # the key is everything that makes two items the same
+            key = (parsed["item_name"], parsed["size"], parsed["flavour"], parsed["price"])
+            item_counts[key] += 1
+            item_details[key] = parsed
+
+        for key, quantity in item_counts.items():
+            details = item_details[key]
+            order_items.append({
+                "id": str(uuid.uuid4()),
+                "order_id": order_id,
+                "item_name": details["item_name"],
+                "size": details["size"],
+                "flavour": details["flavour"],  # None if the drink isn't flavoured
+                "price": details["price"],
+                "quantity": quantity
+            })
+
+    return orders, order_items
 
 
 # -----------------------------
-# LOAD
+# SAVE TO JSON
 # -----------------------------
 def load_json(data, output_file):
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -106,21 +154,19 @@ def load_json(data, output_file):
 def run_pipeline():
     rows = extract_csv(CSV_PATH)
 
-    transactions, items = transform_data(rows)
+    orders, order_items = transform_data(rows)
 
     load_json(
         {
-            "transactions": transactions,
-            "items": items
+            "orders": orders,
+            "order_items": order_items
         },
         OUTPUT_PATH
     )
 
     print("\n--- DONE ---")
-    print("Transactions:", len(transactions))
-    print("Items:", len(items))
+    print("Orders:", len(orders))
+    print("Order items:", len(order_items))
 
-    return transactions, items
+    return orders, order_items
 
-
-run_pipeline()

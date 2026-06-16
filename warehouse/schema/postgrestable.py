@@ -24,36 +24,33 @@ def create_tables():
     conn = get_connection()
     cur = conn.cursor()
 
-    # -------------------------
-    # SIZES TABLE
-    # -------------------------
+    # lookup table for drink sizes - only ever Large or Regular
+    # seeded once at setup, ETL reads from it, never writes to it
     cur.execute("""
     CREATE TABLE IF NOT EXISTS sizes (
         id      UUID            NOT NULL,
-        name    VARCHAR(20)     NOT NULL,
+        name    VARCHAR(20)     NOT NULL UNIQUE,
         PRIMARY KEY (id)
     );
     """)
 
-    # -------------------------
-    # FLAVOURS TABLE
-    # -------------------------
+    # lookup table for flavours e.g. Hazelnut, Caramel, Vanilla
+    # seeded once at setup, ETL reads from it, never writes to it
     cur.execute("""
     CREATE TABLE IF NOT EXISTS flavours (
         id      UUID            NOT NULL,
-        name    VARCHAR(50)     NOT NULL,
+        name    VARCHAR(50)     NOT NULL UNIQUE,
         PRIMARY KEY (id)
     );
     """)
 
-    # -------------------------
-    # ORDERS TABLE
-    # -------------------------
+    # one row per customer visit at a branch
+    # customer_id is a hash of their name - lets us spot regulars without storing real names
     cur.execute("""
     CREATE TABLE IF NOT EXISTS orders (
         id              UUID            NOT NULL,
         branch_name     VARCHAR(100)    NOT NULL,
-        customer_name   VARCHAR(100)    NOT NULL,
+        customer_id     UUID            NOT NULL,
         order_time      TIMESTAMP       NOT NULL,
         payment_method  VARCHAR(10)     NOT NULL,
         total_amount    DECIMAL(10,2)   NOT NULL,
@@ -61,9 +58,10 @@ def create_tables():
     );
     """)
 
-    # -------------------------
-    # ORDER ITEMS TABLE
-    # -------------------------
+    # one row per distinct item in an order
+    # quantity handles duplicates e.g. 3x Large Chai latte = 1 row with quantity 3
+    # size_id and flavour_id are logical references to the lookup tables, not enforced
+    # as FK constraints so this stays compatible with Redshift later
     cur.execute("""
     CREATE TABLE IF NOT EXISTS order_items (
         id          UUID            NOT NULL,
