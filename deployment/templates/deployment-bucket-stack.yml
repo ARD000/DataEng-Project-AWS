@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  ETL lambda skeleton for spam project, triggered by S3 bucket upload.
+
+Parameters:
+  YourName:
+    Type: String
+    Description: Enter your name, in format 'first-last', used as the prefix of the S3 bucket name
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${YourName}-deployment-bucket'
+      PublicAccessBlockConfiguration: # do not allow any public access
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      Tags:
+        - Key: Name
+          Value: !Sub '${YourName}-deployment-bucket'
+
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+          - Sid: "AllowSSLRequestsOnly"
+            Action: "s3:*"
+            Principal: "*"
+            Effect: "Deny" # Block if...
+            Resource:
+              - !Sub "arn:aws:s3:::${YourName}-deployment-bucket"
+              - !Sub "arn:aws:s3:::${YourName}-deployment-bucket/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false" # ...the request is not HTTPS
