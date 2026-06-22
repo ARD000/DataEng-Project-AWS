@@ -107,18 +107,16 @@ def seed_lookup_tables(connection, cursor):
         raise ex
 
 
-def _get_size_id(cursor, size_name):
-    cursor.execute('SELECT id FROM sizes WHERE name = %s', (size_name,))
-    result = cursor.fetchone()
-    return result[0] if result else None
+def _load_size_lookup(cursor):
+    # Fetch all sizes once into a dict {name: id} instead of querying per item
+    cursor.execute('SELECT name, id FROM sizes')
+    return {row[0]: row[1] for row in cursor.fetchall()}
 
 
-def _get_flavour_id(cursor, flavour_name):
-    if not flavour_name:
-        return None
-    cursor.execute('SELECT id FROM flavours WHERE name = %s', (flavour_name,))
-    result = cursor.fetchone()
-    return result[0] if result else None
+def _load_flavour_lookup(cursor):
+    # Fetch all flavours once into a dict {name: id} instead of querying per item
+    cursor.execute('SELECT name, id FROM flavours')
+    return {row[0]: row[1] for row in cursor.fetchall()}
 
 
 def save_data_in_db(connection, cursor, bucket_name, file_path, orders, order_items):
@@ -138,6 +136,11 @@ def save_data_in_db(connection, cursor, bucket_name, file_path, orders, order_it
         f'orders={len(orders)}, order_items={len(order_items)}'
     )
     try:
+        # Load lookup tables once upfront - avoids one Redshift query per order item
+        size_lookup = _load_size_lookup(cursor)
+        flavour_lookup = _load_flavour_lookup(cursor)
+        LOGGER.info(f'save_data_in_db: loaded lookups: sizes={size_lookup}, flavours={list(flavour_lookup.keys())}')
+
         for order in orders:
             cursor.execute(
                 '''
@@ -156,8 +159,8 @@ def save_data_in_db(connection, cursor, bucket_name, file_path, orders, order_it
             )
 
         for item in order_items:
-            size_id = _get_size_id(cursor, item['size'])
-            flavour_id = _get_flavour_id(cursor, item['flavour'])
+            size_id = size_lookup.get(item['size'])
+            flavour_id = flavour_lookup.get(item['flavour']) if item['flavour'] else None
             cursor.execute(
                 '''
                 INSERT INTO order_items

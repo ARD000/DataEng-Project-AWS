@@ -20,7 +20,7 @@ Resources:
       Runtime: python3.12
       Handler: mystery_shop_etl_lambda.lambda_handler # file_name.function_name
       Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lambda-execution-role' # security rule
-      Timeout: 30 # max running time in seconds (make as low as possible)
+      Timeout: 120 # max running time in seconds
       ReservedConcurrentExecutions: 10 # how many can run at once
       Code: ../src/
       Environment:
