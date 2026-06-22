@@ -1,4 +1,6 @@
 #!/bin/sh
+# Convert Windows line endings to Unix in case this file was edited on Windows
+sed -i 's/\r//' "$0"
 set -eu
 
 ###
