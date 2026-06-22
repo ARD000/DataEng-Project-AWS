@@ -8,24 +8,29 @@ from collections import defaultdict
 LOGGER = logging.getLogger()
 LOGGER.setLevel(logging.INFO)
 
+header_fields = [
+    "date",
+    "time",
+    "location",
+    "customer_name",
+    "items_total",
+    "amount_paid",
+    "payment_method",
+    "card_number"
+]
+
 
 def extract(body_text):
-    """
-    Parses raw CSV text into a list of dictionaries.
-
-    Args:
-        body_text: CSV file content as a list of strings (one per line),
-                   as returned by s3_utils.load_file().
-
-    Returns:
-        List of dictionaries, one per row. Column names are stripped of
-        leading/trailing whitespace (skipinitialspace=True).
-        Columns: date, time, location, customer_name, items_total,
-                 amount_paid, payment_method, card_number
-    """
     LOGGER.info('extract: starting')
+    reader = csv.DictReader(
+        body_text,
+        fieldnames=header_fields,
+        delimiter=',',
+    )
 
-    reader = csv.DictReader(body_text, skipinitialspace=True)
+    # skip header row
+    next(reader)
+
     data = [row for row in reader]
 
     LOGGER.info(f'extract: done: rows={len(data)}')
@@ -73,15 +78,8 @@ def transform(data):
         - items_total string is split into individual order_item rows
         - duplicate items within one order are collapsed into quantity > 1
 
-    Args:
-        data: List of row dictionaries from extract().
-
     Returns:
-        Tuple of (orders, order_items):
-            orders      - list of dicts with id, branch_name, customer_id,
-                          order_time, payment_method, total_amount
-            order_items - list of dicts with id, order_id, item_name, size,
-                          flavour, price, quantity
+        Tuple of (orders, order_items)
     """
     LOGGER.info(f'transform: starting: rows={len(data)}')
     orders = []
