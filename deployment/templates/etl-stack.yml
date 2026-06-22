@@ -33,6 +33,14 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub '${YourName}-etl-lambda'
+      Environment:
+        Variables:
+          SSM_PARAMETER_NAME:
+            Fn::Join:
+            - '_'
+            - Fn::Split:
+              - '-'
+              - !Sub '${TeamName}_redshift_settings'
 
   RawDataBucket:
     Type: AWS::S3::Bucket
