@@ -467,4 +467,3 @@ bash teardown.sh
 This removes all AWS resources and stops any ongoing charges.
 
 ---
-Test ...
